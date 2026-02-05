@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Ethical AI Auditor", layout="wide")
 
 # --- MEMORY INITIALIZATION ---
-# This acts as the "database" during your session so logs don't disappear
 if 'audit_log' not in st.session_state:
     st.session_state.audit_log = []
 
@@ -22,9 +21,7 @@ def train_system():
         st.error("Dataset not found! Please run 'generate_data.py' first.")
         st.stop()
     
-    # One-hot encode Gender and Race
     df_encoded = pd.get_dummies(df, columns=['Gender', 'Race'])
-    
     X = df_encoded.drop('Loan_Status', axis=1)
     y = df_encoded['Loan_Status']
     
@@ -37,7 +34,6 @@ model, X_test, y_test, original_df = train_system()
 
 # --- CENTRAL CALCULATIONS ---
 probs = model.predict_proba(X_test)[:, 1]
-# Calculate the "Baseline" (Average probability)
 baseline_prob = probs.mean() 
 
 results_df = X_test.copy()
@@ -45,10 +41,16 @@ results_df['Probability'] = probs
 results_df['AI_Decision_Value'] = (probs > 0.5).astype(int)
 results_df['AI_Verdict'] = results_df['AI_Decision_Value'].map({1: "APPROVED", 0: "REJECTED"})
 
-# --- UI NAVIGATION ---
+# --- UI NAVIGATION & GLOBAL STATS ---
 st.title("⚖️ Ethical AI Loan Approval & Audit System")
 st.sidebar.header("Navigation")
 page = st.sidebar.radio("Go to:", ["Decision Dashboard", "Fairness Audit & Metrics", "Session Audit Trail"])
+
+# New Global Stats Section so you always know what the "Average" is
+st.sidebar.divider()
+st.sidebar.subheader("📈 Global Audit Stats")
+st.sidebar.metric("System Baseline (Avg)", f"{baseline_prob*100:.1f}%")
+st.sidebar.caption("This is the 'Average' confidence across all applicants. Your delta (e.g. -67%) is relative to this number.")
 
 # === PAGE 1: DECISION DASHBOARD ===
 if page == "Decision Dashboard":
@@ -56,6 +58,10 @@ if page == "Decision Dashboard":
     
     selected_index = st.selectbox("Select Applicant ID to Review:", results_df.index)
     applicant = results_df.loc[selected_index]
+
+    prob_val = applicant['Probability']
+    diff = prob_val - baseline_prob
+    ai_verdict_str = applicant['AI_Verdict']
     
     col1, col2 = st.columns(2)
     
@@ -66,59 +72,57 @@ if page == "Decision Dashboard":
         
         st.divider()
         st.markdown("### 🤖 AI Verdict")
-        prob_val = applicant['Probability']
-        diff = prob_val - baseline_prob
+        
+        # This delta explains the -67% clearly now
         st.metric("Repayment Confidence", f"{prob_val*100:.1f}%", delta=f"{diff*100:.1f}% vs Average")
         
         if prob_val > 0.5:
-            st.success(f"**STATUS: ✅ {applicant['AI_Verdict']}**")
+            st.success(f"**STATUS: ✅ {ai_verdict_str}**")
         else:
-            st.error(f"**STATUS: ❌ {applicant['AI_Verdict']}**")
+            st.error(f"**STATUS: ❌ {ai_verdict_str}**")
         
     with col2:
         st.warning("### 🔍 The 'Why' (Individual Explainability)")
         
-        raw_features = applicant.drop(['Probability', 'AI_Decision_Value', 'AI_Verdict'])
-        numeric_features = pd.to_numeric(raw_features, errors='coerce').fillna(0)
-        
-        # Perfected Calibration Math
-        feature_diff = (numeric_features - X_test.mean()) / (X_test.std() + 1e-9)
-        local_contribution = feature_diff * model.feature_importances_
-        scaling_factor = abs(diff) / (local_contribution.abs().sum() + 1e-9)
-        calibrated_contribution = local_contribution * scaling_factor
-        
-        top_indices = calibrated_contribution.abs().nlargest(8).index
-        plot_series = calibrated_contribution[top_indices].sort_values()
+        try:
+            raw_features = applicant.drop(['Probability', 'AI_Decision_Value', 'AI_Verdict'])
+            numeric_features = pd.to_numeric(raw_features, errors='coerce').fillna(0)
+            
+            feature_diff = (numeric_features - X_test.mean()) / (X_test.std() + 1e-9)
+            local_contribution = feature_diff * model.feature_importances_
+            scaling_factor = abs(diff) / (local_contribution.abs().sum() + 1e-9)
+            calibrated_contribution = local_contribution * scaling_factor
+            
+            top_indices = calibrated_contribution.abs().nlargest(8).index
+            plot_series = calibrated_contribution[top_indices].sort_values()
 
-        fig, ax = plt.subplots(figsize=(8, 5))
-        colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in plot_series]
-        plot_series.plot(kind='barh', color=colors, ax=ax)
-        ax.set_title(f"Factors influencing the {prob_val*100:.1f}% Confidence")
-        ax.axvline(0, color='black', linewidth=0.8)
-        plt.tight_layout()
-        st.pyplot(fig)
-        
-        # --- ADDED BACK: INTERPRETATION TEXT ---
-        st.write(f"**Interpreting the logic for ID {selected_index}:**")
-        st.write("The Green bars pushed the AI toward Approval. The Red bars pulled it toward Rejection.")
+            fig, ax = plt.subplots(figsize=(8, 5))
+            colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in plot_series]
+            plot_series.plot(kind='barh', color=colors, ax=ax)
+            ax.set_title(f"Factors pulling score from {baseline_prob*100:.1f}% to {prob_val*100:.1f}%")
+            ax.axvline(0, color='black', linewidth=0.8)
+            plt.tight_layout()
+            st.pyplot(fig)
+            
+            st.write(f"**Interpreting logic for ID {selected_index}:**")
+            st.write(f"The AI starts at the baseline of **{baseline_prob*100:.1f}%**. These factors combined to move the final score by **{diff*100:.1f}%**.")
+        except Exception as e:
+            st.error("Visualization Error: Chart failed to load.")
 
     st.divider()
     st.subheader("📝 Final Human Decision (Ethical Oversight)")
     c1, c2 = st.columns([1, 2])
     with c1:
-        # Action selector
         human_decision = st.radio("Audit Action:", ["Confirm AI Decision", "Manual Override (Approve)", "Manual Override (Reject)"])
     with c2:
-        # Use a unique key for the text area so it clears/updates correctly per applicant
         reason = st.text_area("Audit Justification:", placeholder="Provide reason for decision...", key=f"reason_{selected_index}")
         
         if st.button("Submit Audit Record"):
             if reason:
-                # Store the record in session memory
                 log_entry = {
                     "ID": selected_index,
                     "AI Confidence": f"{prob_val*100:.1f}%",
-                    "AI Verdict": applicant['AI_Verdict'],
+                    "AI Verdict": ai_verdict_str,
                     "Human Action": human_decision,
                     "Reasoning": reason
                 }
@@ -150,14 +154,12 @@ elif page == "Fairness Audit & Metrics":
     st.write("**Race Approval Rates**")
     plot_parity('Race')
 
-# === PAGE 3: AUDIT TRAIL (NEW) ===
+# === PAGE 3: AUDIT TRAIL ===
 elif page == "Session Audit Trail":
     st.subheader("📜 Human-in-the-Loop Audit Trail")
     if st.session_state.audit_log:
         audit_df = pd.DataFrame(st.session_state.audit_log)
         st.table(audit_df)
-        
-        # Download Button
         csv = audit_df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📥 Download Audit Report (CSV)",
@@ -166,4 +168,4 @@ elif page == "Session Audit Trail":
             mime="text/csv",
         )
     else:
-        st.info("No audit records found. Go to the Dashboard to review applicants.")
+        st.info("No audit records found.")
