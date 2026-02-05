@@ -50,7 +50,7 @@ page = st.sidebar.radio("Go to:", ["Decision Dashboard", "Fairness Audit & Metri
 st.sidebar.divider()
 st.sidebar.subheader("📈 Global Audit Stats")
 st.sidebar.metric("System Baseline (Avg)", f"{baseline_prob*100:.1f}%")
-st.sidebar.caption("This is the 'Average' confidence across all applicants. Your delta (e.g. -67%) is relative to this number.")
+st.sidebar.caption("This is the 'Average' confidence across all applicants.")
 
 # === PAGE 1: DECISION DASHBOARD ===
 if page == "Decision Dashboard":
