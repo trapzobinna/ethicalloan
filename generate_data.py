@@ -15,8 +15,6 @@ def generate_ethical_dataset(n=2000):
     
     df = pd.DataFrame(data)
     
-    # Simple logic: Approval is based on Credit and Income
-    # But we add "noise" so the AI might accidentally find patterns in Race/Gender
     score = (df['Credit_Score'] / 850) * 0.5 + (df['Income'] / 150000) * 0.4 + (df['Employment_Years'] / 40) * 0.1
     df['Loan_Status'] = (score > 0.5).astype(int)
     
