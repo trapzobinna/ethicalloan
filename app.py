@@ -4,16 +4,17 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
+import shap  # <--- NEW: Import SHAP
 
 # --- CONFIG ---
-st.set_page_config(page_title="Ethical AI Auditor", layout="wide")
+st.set_page_config(page_title="Ethical AI Auditor (SHAP Edition)", layout="wide")
 
 # --- MEMORY INITIALIZATION ---
 if 'audit_log' not in st.session_state:
     st.session_state.audit_log = []
 
 # --- BACKEND ---
-@st.cache_data
+@st.cache_resource # Changed to cache_resource for the model object
 def train_system():
     try:
         df = pd.read_csv('loan_experiment_data.csv')
@@ -28,9 +29,12 @@ def train_system():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     model = RandomForestClassifier(n_estimators=100, random_state=42).fit(X_train, y_train)
     
-    return model, X_test, y_test, df
+    # NEW: Initialize SHAP Explainer
+    explainer = shap.TreeExplainer(model)
+    
+    return model, X_test, y_test, df, explainer
 
-model, X_test, y_test, original_df = train_system()
+model, X_test, y_test, original_df, explainer = train_system()
 
 # --- CENTRAL CALCULATIONS ---
 probs = model.predict_proba(X_test)[:, 1]
@@ -46,34 +50,31 @@ st.title("⚖️ Ethical AI Loan Approval & Audit System")
 st.sidebar.header("Navigation")
 page = st.sidebar.radio("Go to:", ["Decision Dashboard", "Fairness Audit & Metrics", "Session Audit Trail"])
 
-# New Global Stats Section so you always know what the "Average" is
 st.sidebar.divider()
 st.sidebar.subheader("📈 Global Audit Stats")
 st.sidebar.metric("System Baseline (Avg)", f"{baseline_prob*100:.1f}%")
-st.sidebar.caption("This is the 'Average' confidence across all applicants.")
 
 # === PAGE 1: DECISION DASHBOARD ===
 if page == "Decision Dashboard":
     st.subheader("📥 Human-in-the-Loop Review Queue")
     
     selected_index = st.selectbox("Select Applicant ID to Review:", results_df.index)
-    applicant = results_df.loc[selected_index]
+    applicant_data = X_test.loc[[selected_index]] # SHAP requires a DataFrame row
+    applicant_display = results_df.loc[selected_index]
 
-    prob_val = applicant['Probability']
+    prob_val = applicant_display['Probability']
     diff = prob_val - baseline_prob
-    ai_verdict_str = applicant['AI_Verdict']
+    ai_verdict_str = applicant_display['AI_Verdict']
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.info("### 👤 Applicant Profile")
-        display_profile = applicant.drop(['Probability', 'AI_Decision_Value', 'AI_Verdict'])
+        display_profile = applicant_display.drop(['Probability', 'AI_Decision_Value', 'AI_Verdict'])
         st.write(display_profile.to_frame().T)
         
         st.divider()
         st.markdown("### 🤖 AI Verdict")
-        
-        # This delta explains the -67% clearly now
         st.metric("Repayment Confidence", f"{prob_val*100:.1f}%", delta=f"{diff*100:.1f}% vs Average")
         
         if prob_val > 0.5:
@@ -82,32 +83,36 @@ if page == "Decision Dashboard":
             st.error(f"**STATUS: ❌ {ai_verdict_str}**")
         
     with col2:
-        st.warning("### 🔍 The 'Why' (Individual Explainability)")
+        st.warning("### 🔍 The 'Why' (SHAP Explainability)")
         
         try:
-            raw_features = applicant.drop(['Probability', 'AI_Decision_Value', 'AI_Verdict'])
-            numeric_features = pd.to_numeric(raw_features, errors='coerce').fillna(0)
+            # NEW: Calculate SHAP Values for the specific applicant
+            # shap_values[1] is for the "Approved" class
+            shap_values = explainer.shap_values(applicant_data)
             
-            feature_diff = (numeric_features - X_test.mean()) / (X_test.std() + 1e-9)
-            local_contribution = feature_diff * model.feature_importances_
-            scaling_factor = abs(diff) / (local_contribution.abs().sum() + 1e-9)
-            calibrated_contribution = local_contribution * scaling_factor
-            
-            top_indices = calibrated_contribution.abs().nlargest(8).index
-            plot_series = calibrated_contribution[top_indices].sort_values()
+            # Handling RF output (list of arrays) vs newer SHAP versions
+            if isinstance(shap_values, list):
+                sv = shap_values[1][0]
+            else:
+                sv = shap_values[0][:, 1]
+
+            # Create a series for plotting
+            plot_series = pd.Series(sv, index=X_test.columns).sort_values()
 
             fig, ax = plt.subplots(figsize=(8, 5))
             colors = ['#2ecc71' if x > 0 else '#e74c3c' for x in plot_series]
             plot_series.plot(kind='barh', color=colors, ax=ax)
-            ax.set_title(f"Factors pulling score from {baseline_prob*100:.1f}% to {prob_val*100:.1f}%")
+            ax.set_title(f"SHAP Impact: Features Driving the Decision")
             ax.axvline(0, color='black', linewidth=0.8)
+            ax.set_xlabel("Impact on Approval Probability")
             plt.tight_layout()
             st.pyplot(fig)
             
-            st.write(f"**Interpreting logic for ID {selected_index}:**")
-            st.write(f"The AI starts at the baseline of **{baseline_prob*100:.1f}%**. These factors combined to move the final score by **{diff*100:.1f}%**.")
+            st.write(f"**Interpreting Logic with SHAP:**")
+            st.write("Green bars increase the probability of approval, while red bars decrease it. Unlike simple weights, SHAP considers feature interactions.")
+            
         except Exception as e:
-            st.error("Visualization Error: Chart failed to load.")
+            st.error(f"Visualization Error: {e}")
 
     st.divider()
     st.subheader("📝 Final Human Decision (Ethical Oversight)")
