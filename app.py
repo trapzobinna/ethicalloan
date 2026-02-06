@@ -4,17 +4,17 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
-import shap  # <--- NEW: Import SHAP
+import shap  
 
-# --- CONFIG ---
+
 st.set_page_config(page_title="Ethical AI Auditor (SHAP Edition)", layout="wide")
 
-# --- MEMORY INITIALIZATION ---
+
 if 'audit_log' not in st.session_state:
     st.session_state.audit_log = []
 
-# --- BACKEND ---
-@st.cache_resource # Changed to cache_resource for the model object
+
+@st.cache_resource 
 def train_system():
     try:
         df = pd.read_csv('loan_experiment_data.csv')
@@ -29,14 +29,14 @@ def train_system():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     model = RandomForestClassifier(n_estimators=100, random_state=42).fit(X_train, y_train)
     
-    # NEW: Initialize SHAP Explainer
+
     explainer = shap.TreeExplainer(model)
     
     return model, X_test, y_test, df, explainer
 
 model, X_test, y_test, original_df, explainer = train_system()
 
-# --- CENTRAL CALCULATIONS ---
+
 probs = model.predict_proba(X_test)[:, 1]
 baseline_prob = probs.mean() 
 
@@ -45,21 +45,20 @@ results_df['Probability'] = probs
 results_df['AI_Decision_Value'] = (probs > 0.5).astype(int)
 results_df['AI_Verdict'] = results_df['AI_Decision_Value'].map({1: "APPROVED", 0: "REJECTED"})
 
-# --- UI NAVIGATION & GLOBAL STATS ---
-st.title("⚖️ Ethical AI Loan Approval & Audit System")
+
+st.title(" Ethical AI Loan Approval & Audit System")
 st.sidebar.header("Navigation")
 page = st.sidebar.radio("Go to:", ["Decision Dashboard", "Fairness Audit & Metrics", "Session Audit Trail"])
 
 st.sidebar.divider()
-st.sidebar.subheader("📈 Global Audit Stats")
+st.sidebar.subheader(" Global Audit Stats")
 st.sidebar.metric("System Baseline (Avg)", f"{baseline_prob*100:.1f}%")
 
-# === PAGE 1: DECISION DASHBOARD ===
 if page == "Decision Dashboard":
-    st.subheader("📥 Human-in-the-Loop Review Queue")
+    st.subheader(" Human-in-the-Loop Review Queue")
     
     selected_index = st.selectbox("Select Applicant ID to Review:", results_df.index)
-    applicant_data = X_test.loc[[selected_index]] # SHAP requires a DataFrame row
+    applicant_data = X_test.loc[[selected_index]] 
     applicant_display = results_df.loc[selected_index]
 
     prob_val = applicant_display['Probability']
@@ -74,7 +73,7 @@ if page == "Decision Dashboard":
         st.write(display_profile.to_frame().T)
         
         st.divider()
-        st.markdown("### 🤖 AI Verdict")
+        st.markdown("###  AI Verdict")
         st.metric("Repayment Confidence", f"{prob_val*100:.1f}%", delta=f"{diff*100:.1f}% vs Average")
         
         if prob_val > 0.5:
@@ -83,20 +82,17 @@ if page == "Decision Dashboard":
             st.error(f"**STATUS: ❌ {ai_verdict_str}**")
         
     with col2:
-        st.warning("### 🔍 The 'Why' (SHAP Explainability)")
+        st.warning("###  The 'Why' (SHAP Explainability)")
         
         try:
-            # NEW: Calculate SHAP Values for the specific applicant
-            # shap_values[1] is for the "Approved" class
             shap_values = explainer.shap_values(applicant_data)
             
-            # Handling RF output (list of arrays) vs newer SHAP versions
             if isinstance(shap_values, list):
                 sv = shap_values[1][0]
             else:
                 sv = shap_values[0][:, 1]
 
-            # Create a series for plotting
+          
             plot_series = pd.Series(sv, index=X_test.columns).sort_values()
 
             fig, ax = plt.subplots(figsize=(8, 5))
@@ -115,7 +111,7 @@ if page == "Decision Dashboard":
             st.error(f"Visualization Error: {e}")
 
     st.divider()
-    st.subheader("📝 Final Human Decision (Ethical Oversight)")
+    st.subheader(" Final Human Decision (Ethical Oversight)")
     c1, c2 = st.columns([1, 2])
     with c1:
         human_decision = st.radio("Audit Action:", ["Confirm AI Decision", "Manual Override (Approve)", "Manual Override (Reject)"])
@@ -136,14 +132,14 @@ if page == "Decision Dashboard":
             else:
                 st.warning("Justification is required for the audit trail.")
 
-# === PAGE 2: FAIRNESS AUDIT ===
+
 elif page == "Fairness Audit & Metrics":
-    st.subheader("📊 Bias Detection & Performance Metrics")
+    st.subheader(" Bias Detection & Performance Metrics")
     acc = (results_df['AI_Decision_Value'] == y_test).mean()
     st.metric("System Accuracy", f"{acc*100:.1f}%")
     
     st.divider()
-    st.write("### ⚖️ Demographic Parity Audit")
+    st.write("###  Demographic Parity Audit")
     
     def plot_parity(column_prefix):
         cols = [c for c in X_test.columns if column_prefix in c]
@@ -159,15 +155,15 @@ elif page == "Fairness Audit & Metrics":
     st.write("**Race Approval Rates**")
     plot_parity('Race')
 
-# === PAGE 3: AUDIT TRAIL ===
+
 elif page == "Session Audit Trail":
-    st.subheader("📜 Human-in-the-Loop Audit Trail")
+    st.subheader(" Human-in-the-Loop Audit Trail")
     if st.session_state.audit_log:
         audit_df = pd.DataFrame(st.session_state.audit_log)
         st.table(audit_df)
         csv = audit_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Download Audit Report (CSV)",
+            label=" Download Audit Report (CSV)",
             data=csv,
             file_name="loan_audit_report.csv",
             mime="text/csv",
